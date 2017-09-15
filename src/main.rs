@@ -1,14 +1,17 @@
 extern crate itertools;
-#[macro_use]
-extern crate lazy_static;
+extern crate byteorder;
 
 use std::slice;
 use std::io;
 use std::io::prelude::*;
+use std::io::Cursor;
+use std::mem;
 use std::process;
+
 use itertools::Itertools;
 use itertools::Tuples;
-use std::mem;
+
+use byteorder::{LittleEndian, WriteBytesExt};
 
 fn main() {
     loop {
@@ -61,55 +64,32 @@ enum StatementType {
     Insert,
     Select,
 }
-
 const COLUMN_USERNAME_SIZE : usize = 32;
 const COLUMN_EMAIL_SIZE : usize = 32;
 
-type Id = u32;
-type UserName = [u8; COLUMN_USERNAME_SIZE];
-type EMail = [u8; COLUMN_EMAIL_SIZE];
-
 struct Row {
     id: u32,
-    username: UserName,
-    email: EMail,
+    username: [u8; COLUMN_USERNAME_SIZE],
+    email: [u8; COLUMN_EMAIL_SIZE],
 }
 
-struct RowSize {
-    id_size : usize,
-    username_size : usize,
-    email_size : usize,
-}
-
-struct RowLayout {
-    id_offset : usize,
-    username_offset : usize,
-    email_offset : usize,
-}
+const ID_SIZE : usize = 4;  // Bytes
+const USERNAME_SIZE : usize = 4 * COLUMN_USERNAME_SIZE;
+const EMAIL_SIZE : usize = 4 * COLUMN_EMAIL_SIZE;
 
 const ID_OFFSET : usize = 0;
+const USERNAME_OFFSET : usize = ID_OFFSET + ID_SIZE;
+const EMAIL_OFFSET : usize = USERNAME_OFFSET + USERNAME_SIZE;
+const ROW_SIZE : usize = ID_SIZE + USERNAME_SIZE + EMAIL_SIZE;
 
-lazy_static! {
-    static ref ROW_SIZE: RowSize = {
-        let id_size = mem::size_of::<Id>();
-        let username_size = mem::size_of::<UserName>();
-        let email_size = mem::size_of::<EMail>();
-        RowSize{
-            id_size: id_size,
-            username_size: username_size,
-            email_size: email_size,
-        }
-    };
+const PAGE_SIZE: u32 = 4096;
+const TABLE_MAX_PAGES: u32 = 100;
+const ROWS_PER_PAGE: u32 = PAGE_SIZE / ROW_SIZE;
+const TABLE_MAX_ROWS: u32 = PAGE_SIZE / ROW_SIZE;
 
-    static ref ROW_LAYOUT: RowLayout = {
-        let username_offset = ID_OFFSET.saturating_add(ROW_SIZE.id_size);
-        let email_offset = username_offset.saturating_add(ROW_SIZE.username_size);
-        RowLayout{
-            id_offset: ID_OFFSET,
-            username_offset: username_offset,
-            email_offset: email_offset,
-        }
-    };
+struct Table {
+    pages: [u8; TABLE_MAX_PAGES],
+    num_rows: u32,
 }
 
 struct Statement {
@@ -168,6 +148,20 @@ fn execute_statement(s: Statement) {
 
 }
 
-fn serialize_row(ref row : Row, ref mut dest: [u8]) {
+fn serialize_row(row : &Row, dest: &mut Vec<u8>) {
+    dest.write_u8::<LittleEndian>(row.id).unwrap();
+    dest.write_u8::<LittleEndian>(row.username).unwrap();
+    dest.write_u8::<LittleEndian>(row.email).unwrap();
+}
 
+fn deserialize_row(src: &Vec<u8>, row : &mut Row) {
+    let mut rdr = Cursor::new(src);
+    row.id = rdr.read_u8::<LittleEndian>().unwrap();
+    row.username = rdr.read_u8::<LittleEndian>().unwrap();
+    row.email = rdr.read_u8::<LittleEndian>().unwrap();
+}
+
+fn row_slot(table: &Table, row_num: u32) {
+    let page_num = row_num / ROWS_PER_PAGE;
+    let page = table.pages[page_num];
 }
